@@ -1,0 +1,80 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+)
+
+var initCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Create a default config file",
+	Long: `Creates a default configuration file at ~/.veilwarden/config.yaml.
+
+The default config allows writes to the current directory and /tmp,
+and permits network access to common package registries.`,
+	RunE: runInit,
+}
+
+func init() {
+	rootCmd.AddCommand(initCmd)
+}
+
+const defaultConfig = `# Veil configuration
+# See: https://github.com/seslattery/veil
+
+sandbox:
+  allowed_write_paths:
+    - ./      # Current directory
+    - /tmp    # Temporary files
+
+policy:
+  allowlist:
+    # Package registries
+    - "*.npmjs.org"
+    - "registry.npmjs.org"
+    - "*.yarnpkg.com"
+    - "pypi.org"
+    - "*.pypi.org"
+    - "files.pythonhosted.org"
+
+    # Version control
+    - "github.com"
+    - "*.github.com"
+    - "gitlab.com"
+    - "*.gitlab.com"
+
+    # AI services
+    - "api.anthropic.com"
+    - "api.openai.com"
+`
+
+func runInit(cmd *cobra.Command, args []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("getting home directory: %w", err)
+	}
+
+	configDir := filepath.Join(home, ".veilwarden")
+	configPath := filepath.Join(configDir, "config.yaml")
+
+	// Check if config already exists
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("config already exists at %s", configPath)
+	}
+
+	// Create directory
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+
+	// Write config file
+	if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
+		return fmt.Errorf("writing config file: %w", err)
+	}
+
+	fmt.Printf("Created config at %s\n", configPath)
+	return nil
+}

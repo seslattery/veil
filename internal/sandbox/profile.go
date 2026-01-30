@@ -50,7 +50,7 @@ func GenerateProfile(proxyPort int, allowedWritePaths []string, enablePTY bool) 
 		return "", err
 	}
 
-	// Expand paths and make absolute
+	// Expand paths, make absolute, and resolve symlinks
 	expandedPaths := make([]string, 0, len(allowedWritePaths))
 	for _, p := range allowedWritePaths {
 		expanded := expandPath(p, homeDir)
@@ -58,7 +58,13 @@ func GenerateProfile(proxyPort int, allowedWritePaths []string, enablePTY bool) 
 		if err != nil {
 			return "", err
 		}
-		expandedPaths = append(expandedPaths, abs)
+		// Resolve symlinks (e.g., /tmp -> /private/tmp on macOS)
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			// Path may not exist yet; use the absolute path as-is
+			resolved = abs
+		}
+		expandedPaths = append(expandedPaths, resolved)
 	}
 
 	data := profileData{
