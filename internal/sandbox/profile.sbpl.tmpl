@@ -1,0 +1,167 @@
+(version 1)
+(deny default)
+
+;; === Process ===
+(allow process-exec*)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+(allow mach-priv-task-port (target same-sandbox))
+
+;; === Setuid Binary Escape Hatch ===
+;; Required for /bin/ps which Homebrew shell init uses
+(allow process-exec-interpreter)
+(allow process-exec
+  (literal "/bin/ps")
+  (with no-sandbox))
+
+;; === Filesystem Reads ===
+
+;; Deny reads of home dotfiles
+(deny file-read* (regex #"^{{.HomeDir}}/\..*"))
+
+;; Allow reads everywhere else
+(allow file-read*)
+
+;; === Filesystem Writes ===
+
+(deny file-write*)
+
+;; Dangerous file protection - blocked even in allowed paths
+{{range .DangerousPatterns}}
+(deny file-write* (regex #"{{.}}"))
+{{end}}
+
+;; Allowed write paths
+{{range .AllowedWritePaths}}
+(allow file-write* (subpath "{{.}}"))
+(allow file-write-unlink (subpath "{{.}}"))
+{{end}}
+
+;; Essential device writes
+(allow file-write* (literal "/dev/null"))
+(allow file-write* (literal "/dev/zero"))
+(allow file-write* (literal "/dev/tty"))
+(allow file-write* (literal "/dev/dtracehelper"))
+(allow file-ioctl (literal "/dev/null"))
+(allow file-ioctl (literal "/dev/tty"))
+(allow file-ioctl (literal "/dev/zero"))
+(allow file-ioctl (literal "/dev/random"))
+(allow file-ioctl (literal "/dev/urandom"))
+(allow file-ioctl (literal "/dev/dtracehelper"))
+
+;; macOS temp directories
+(allow file-write* (subpath "/private/var/folders"))
+(allow file-write-unlink (subpath "/private/var/folders"))
+
+;; === Network ===
+
+(deny network*)
+(allow network-bind (local ip "localhost:*"))
+(allow network-outbound (remote tcp "localhost:{{.ProxyPort}}"))
+(allow network-inbound (local tcp "localhost:*"))
+
+;; === IPC ===
+
+(allow ipc-posix-shm)
+(allow ipc-posix-sem)
+
+;; === Mach Services ===
+
+(allow mach-lookup
+  ;; Core system services
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.system.logger")
+  (global-name "com.apple.system.notification_center")
+  (global-name "com.apple.bsd.dirhelper")
+  (global-name "com.apple.logd")
+  ;; Services & UI
+  (global-name "com.apple.lsd.mapdb")
+  (global-name "com.apple.coreservices.launchservicesd")
+  (global-name "com.apple.distributed_notifications@Uv3")
+  ;; Fonts
+  (global-name "com.apple.fonts")
+  (global-name "com.apple.FontObjectsServer")
+  ;; Security (TLS + Keychain)
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.trustd.agent")
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.security.agent")
+  (global-name "com.apple.CoreAuthentication.agent")
+  ;; Power (for sleep/wake handling)
+  (global-name "com.apple.PowerManagement.control")
+  ;; System Configuration (DNS, network)
+  (global-name "com.apple.SystemConfiguration.DNSConfiguration")
+  (global-name "com.apple.SystemConfiguration.configd")
+  (global-name "com.apple.analyticsd"))
+
+;; === User Preferences ===
+
+(allow user-preference-read)
+
+;; === Sysctl ===
+
+(allow sysctl-read
+  ;; Hardware info
+  (sysctl-name "hw.activecpu")
+  (sysctl-name "hw.byteorder")
+  (sysctl-name "hw.cachelinesize_compat")
+  (sysctl-name "hw.cpufamily")
+  (sysctl-name "hw.cpufrequency")
+  (sysctl-name "hw.cputype")
+  (sysctl-name "hw.logicalcpu")
+  (sysctl-name "hw.logicalcpu_max")
+  (sysctl-name "hw.machine")
+  (sysctl-name "hw.memsize")
+  (sysctl-name "hw.ncpu")
+  (sysctl-name "hw.pagesize")
+  (sysctl-name "hw.physicalcpu")
+  (sysctl-name "hw.physicalcpu_max")
+  ;; Kernel info
+  (sysctl-name "kern.argmax")
+  (sysctl-name "kern.hostname")
+  (sysctl-name "kern.maxfilesperproc")
+  (sysctl-name "kern.osproductversion")
+  (sysctl-name "kern.osrelease")
+  (sysctl-name "kern.ostype")
+  (sysctl-name "kern.osversion")
+  (sysctl-name "kern.version")
+  ;; CPU
+  (sysctl-name "machdep.cpu.brand_string")
+  ;; Prefixes
+  (sysctl-name-prefix "hw.optional.")
+  (sysctl-name-prefix "hw.perflevel")
+  (sysctl-name-prefix "kern.proc."))
+(allow sysctl-write (sysctl-name "kern.tcsm_enable"))
+
+;; === IOKit ===
+
+(allow iokit-get-properties)
+(allow iokit-open
+  (iokit-registry-entry-class "IOSurfaceRootUserClient")
+  (iokit-registry-entry-class "RootDomainUserClient")
+  (iokit-user-client-class "IOSurfaceSendRight"))
+
+;; === Misc ===
+
+(allow system-socket (require-all (socket-domain AF_SYSTEM) (socket-protocol 2)))
+(allow distributed-notification-post)
+
+;; Device reads
+(allow file-read* (literal "/dev/null"))
+(allow file-read* (literal "/dev/zero"))
+(allow file-read* (literal "/dev/random"))
+(allow file-read* (literal "/dev/urandom"))
+(allow file-read* (literal "/dev/tty"))
+
+{{if .EnablePTY}}
+;; PTY support (interactive shells)
+(allow pseudo-tty)
+(allow file-read* (literal "/dev/ptmx"))
+(allow file-read* (regex #"^/dev/ttys[0-9]+$"))
+(allow file-write* (literal "/dev/ptmx"))
+(allow file-write* (regex #"^/dev/ttys[0-9]+$"))
+(allow file-ioctl (literal "/dev/ptmx"))
+(allow file-ioctl (regex #"^/dev/ttys[0-9]+$"))
+{{end}}
