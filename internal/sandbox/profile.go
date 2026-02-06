@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -14,11 +15,14 @@ var profileTemplate string
 
 // profileData holds the data for rendering the seatbelt profile.
 type profileData struct {
-	HomeDir           string
-	ProxyPort         int
-	AllowedWritePaths []string
-	DangerousPatterns []string
-	EnablePTY         bool
+	HomeDir              string
+	ProxyPort            int
+	AllowedWriteDirs     []string // Directories (use subpath)
+	AllowedWriteFiles    []string // Individual files (use literal)
+	DotfileExceptionDirs []string // Dotfile directories to allow reading
+	DotfileExceptionFiles []string // Dotfile files to allow reading
+	DangerousPatterns    []string
+	EnablePTY            bool
 }
 
 // dangerousPatterns returns seatbelt regex patterns for files that should
@@ -50,8 +54,9 @@ func GenerateProfile(proxyPort int, allowedWritePaths []string, enablePTY bool) 
 		return "", err
 	}
 
-	// Expand paths, make absolute, and resolve symlinks
-	expandedPaths := make([]string, 0, len(allowedWritePaths))
+	// Expand paths, make absolute, resolve symlinks, and separate files from dirs
+	var dirs, files []string
+	var dotfileDirs, dotfileFiles []string
 	for _, p := range allowedWritePaths {
 		expanded := expandPath(p, homeDir)
 		abs, err := filepath.Abs(expanded)
@@ -64,15 +69,37 @@ func GenerateProfile(proxyPort int, allowedWritePaths []string, enablePTY bool) 
 			// Path may not exist yet; use the absolute path as-is
 			resolved = abs
 		}
-		expandedPaths = append(expandedPaths, resolved)
+
+		// Check if path is a file or directory
+		info, err := os.Stat(resolved)
+		isFile := err == nil && !info.IsDir()
+
+		if isFile {
+			files = append(files, resolved)
+		} else {
+			// Treat as directory (existing dir or path that doesn't exist yet)
+			dirs = append(dirs, resolved)
+		}
+
+		// Track dotfile exceptions separately for the deny rule
+		if isHomeDotfile(resolved, homeDir) {
+			if isFile {
+				dotfileFiles = append(dotfileFiles, resolved)
+			} else {
+				dotfileDirs = append(dotfileDirs, resolved)
+			}
+		}
 	}
 
 	data := profileData{
-		HomeDir:           homeDir,
-		ProxyPort:         proxyPort,
-		AllowedWritePaths: expandedPaths,
-		DangerousPatterns: dangerousPatterns(),
-		EnablePTY:         enablePTY,
+		HomeDir:               homeDir,
+		ProxyPort:             proxyPort,
+		AllowedWriteDirs:      dirs,
+		AllowedWriteFiles:     files,
+		DotfileExceptionDirs:  dotfileDirs,
+		DotfileExceptionFiles: dotfileFiles,
+		DangerousPatterns:     dangerousPatterns(),
+		EnablePTY:             enablePTY,
 	}
 
 	tmpl, err := template.New("profile").Parse(profileTemplate)
@@ -97,4 +124,15 @@ func expandPath(path, homeDir string) string {
 		return homeDir
 	}
 	return path
+}
+
+// isHomeDotfile checks if a path is a dotfile/dotdir in the home directory.
+func isHomeDotfile(path, homeDir string) bool {
+	if !strings.HasPrefix(path, homeDir+"/") {
+		return false
+	}
+	// Get the relative path after home directory
+	rel := strings.TrimPrefix(path, homeDir+"/")
+	// Check if it starts with a dot
+	return strings.HasPrefix(rel, ".")
 }

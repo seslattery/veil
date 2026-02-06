@@ -27,8 +27,10 @@ const defaultConfig = `# Veil configuration
 
 sandbox:
   allowed_write_paths:
-    - ./      # Current directory
-    - /tmp    # Temporary files
+    - ./            # Current directory
+    - /tmp          # Temporary files
+    - ~/.claude     # Claude Code config directory
+    - ~/.claude.json  # Claude Code config file
 
 policy:
   allowlist:
@@ -46,8 +48,14 @@ policy:
     - "gitlab.com"
     - "*.gitlab.com"
 
+    # Google Cloud Storage
+    - "storage.googleapis.com"
+
     # AI services
     - "api.anthropic.com"
+    - "*.anthropic.com"
+    - "*.claude.ai"
+    - "*.claude.com"
     - "api.openai.com"
 `
 

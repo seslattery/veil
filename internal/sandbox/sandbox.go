@@ -37,7 +37,22 @@ func (s *Sandbox) Run(ctx context.Context, name string, args []string, env []str
 		return fmt.Errorf("generating profile: %w", err)
 	}
 
-	sandboxArgs := []string{"-p", profile, name}
+	// Write profile to temp file (more reliable than -p inline)
+	profileFile, err := os.CreateTemp("", "veil-seatbelt-*.sb")
+	if err != nil {
+		return fmt.Errorf("creating profile file: %w", err)
+	}
+	profilePath := profileFile.Name()
+	defer os.Remove(profilePath)
+
+	if _, err := profileFile.WriteString(profile); err != nil {
+		return fmt.Errorf("writing profile: %w", err)
+	}
+	if err := profileFile.Close(); err != nil {
+		return fmt.Errorf("closing profile file: %w", err)
+	}
+
+	sandboxArgs := []string{"-f", profilePath, name}
 	sandboxArgs = append(sandboxArgs, args...)
 
 	cmd := exec.CommandContext(ctx, "sandbox-exec", sandboxArgs...)
@@ -60,40 +75,60 @@ func (s *Sandbox) runWithPTY(cmd *exec.Cmd) error {
 	if err != nil {
 		return fmt.Errorf("starting pty: %w", err)
 	}
-	defer ptmx.Close()
+
+	// Done channel to signal goroutines to exit
+	done := make(chan struct{})
 
 	// Handle terminal resize
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGWINCH)
 	go func() {
-		for range ch {
-			if err := pty.InheritSize(os.Stdin, ptmx); err != nil {
-				// Ignore resize errors
+		for {
+			select {
+			case <-done:
+				return
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+				if err := pty.InheritSize(os.Stdin, ptmx); err != nil {
+					// Ignore resize errors
+				}
 			}
 		}
 	}()
 	ch <- syscall.SIGWINCH // Initial resize
-	defer func() {
-		signal.Stop(ch)
-		close(ch)
-	}()
 
 	// Set stdin to raw mode
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		return fmt.Errorf("setting raw mode: %w", err)
+		// Not a terminal, continue without raw mode
+		oldState = nil
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	// Copy stdin to pty
 	go func() {
 		io.Copy(ptmx, os.Stdin)
 	}()
 
-	// Copy pty to stdout
-	io.Copy(os.Stdout, ptmx)
+	// Copy pty to stdout in goroutine
+	go func() {
+		io.Copy(os.Stdout, ptmx)
+	}()
 
-	return cmd.Wait()
+	// Wait for process to complete
+	err = cmd.Wait()
+
+	// Signal goroutines to stop
+	close(done)
+	signal.Stop(ch)
+	ptmx.Close()
+
+	if oldState != nil {
+		term.Restore(int(os.Stdin.Fd()), oldState)
+	}
+
+	return err
 }
 
 func (s *Sandbox) runWithPipes(cmd *exec.Cmd) error {

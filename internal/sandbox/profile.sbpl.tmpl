@@ -17,8 +17,20 @@
 
 ;; === Filesystem Reads ===
 
-;; Deny reads of home dotfiles
+;; Deny reads of home dotfiles (with exceptions for allowed paths)
+{{if or .DotfileExceptionDirs .DotfileExceptionFiles}}
+(deny file-read*
+  (require-all
+    (regex #"^{{.HomeDir}}/\..*")
+{{range .DotfileExceptionDirs}}
+    (require-not (subpath "{{.}}"))
+{{end}}
+{{range .DotfileExceptionFiles}}
+    (require-not (literal "{{.}}"))
+{{end}}))
+{{else}}
 (deny file-read* (regex #"^{{.HomeDir}}/\..*"))
+{{end}}
 
 ;; Allow reads everywhere else
 (allow file-read*)
@@ -33,9 +45,13 @@
 {{end}}
 
 ;; Allowed write paths
-{{range .AllowedWritePaths}}
+{{range .AllowedWriteDirs}}
 (allow file-write* (subpath "{{.}}"))
 (allow file-write-unlink (subpath "{{.}}"))
+{{end}}
+{{range .AllowedWriteFiles}}
+(allow file-write* (literal "{{.}}"))
+(allow file-write-unlink (literal "{{.}}"))
 {{end}}
 
 ;; Essential device writes
@@ -116,17 +132,23 @@
   (sysctl-name "hw.memsize")
   (sysctl-name "hw.ncpu")
   (sysctl-name "hw.pagesize")
+  (sysctl-name "hw.pagesize_compat")
   (sysctl-name "hw.physicalcpu")
   (sysctl-name "hw.physicalcpu_max")
+  (sysctl-name "hw.ephemeral_storage")
   ;; Kernel info
   (sysctl-name "kern.argmax")
+  (sysctl-name "kern.bootargs")
   (sysctl-name "kern.hostname")
   (sysctl-name "kern.maxfilesperproc")
   (sysctl-name "kern.osproductversion")
   (sysctl-name "kern.osrelease")
   (sysctl-name "kern.ostype")
+  (sysctl-name "kern.osvariant_status")
   (sysctl-name "kern.osversion")
   (sysctl-name "kern.version")
+  ;; Security
+  (sysctl-name "security.mac.lockdown_mode_state")
   ;; CPU
   (sysctl-name "machdep.cpu.brand_string")
   ;; Prefixes
