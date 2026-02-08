@@ -52,7 +52,12 @@ func (s *Sandbox) Run(ctx context.Context, name string, args []string, env []str
 		return fmt.Errorf("closing profile file: %w", err)
 	}
 
-	sandboxArgs := []string{"-f", profilePath, name}
+	binPath, err := exec.LookPath(name)
+	if err != nil {
+		return fmt.Errorf("command not found: %s", name)
+	}
+
+	sandboxArgs := []string{"-f", profilePath, binPath}
 	sandboxArgs = append(sandboxArgs, args...)
 
 	cmd := exec.CommandContext(ctx, "sandbox-exec", sandboxArgs...)
