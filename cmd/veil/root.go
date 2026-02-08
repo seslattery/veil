@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/seslattery/veil/internal/config"
@@ -22,17 +23,25 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "veil [flags] -- command [args...]",
+	Use:   "veil [flags] <command> [args...]",
 	Short: "Security sandbox for AI agents",
 	Long: `Veil provides filesystem isolation via macOS seatbelt and network
 policy enforcement via an allowlist proxy.
 
 Example:
-  veil -- npm install
+  veil claude
+  veil npm install
   veil --dry-run -- make build`,
 	Version:               "0.1.0",
 	DisableFlagsInUseLine: true,
-	RunE:                  run,
+	SilenceErrors:         true,
+	SilenceUsage:          true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return cmd.Help()
+		}
+		return run(cmd, args)
+	},
 }
 
 func init() {
@@ -41,11 +50,24 @@ func init() {
 	rootCmd.Flags().BoolVar(&dryRun, "dry-run", false, "print seatbelt profile without executing")
 }
 
-func run(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("command required after --")
+func main() {
+	Execute()
+}
+
+func Execute() {
+	args := os.Args[1:]
+	if shouldRewriteArgs(args) {
+		args = insertArgSeparator(args)
+		rootCmd.SetArgs(args)
 	}
 
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(cmd *cobra.Command, args []string) error {
 	// Load config
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
@@ -131,4 +153,36 @@ func buildEnv(proxyAddr string) []string {
 	)
 
 	return env
+}
+
+// These are helper functions so that `veil claude` works. It rewrites it to `veil -- claude`
+func isSubcommand(name string) bool {
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == name {
+			return true
+		}
+	}
+	return name == "help"
+}
+
+func shouldRewriteArgs(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return !isSubcommand(arg)
+	}
+	return false
+}
+
+func insertArgSeparator(args []string) []string {
+	for i, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return append(append(args[:i:i], "--"), args[i:]...)
+		}
+	}
+	return args
 }

@@ -18,6 +18,7 @@ type Config struct {
 // SandboxConfig defines filesystem isolation settings.
 type SandboxConfig struct {
 	AllowedWritePaths []string `yaml:"allowed_write_paths"`
+	AllowedReadPaths  []string `yaml:"allowed_read_paths"`
 }
 
 // PolicyConfig defines network policy settings.
