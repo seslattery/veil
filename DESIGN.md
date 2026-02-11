@@ -34,16 +34,23 @@ veil CLI
 User runs: veil -- npm install
 
 1. CLI loads config from ~/.veilwarden/config.yaml
-2. Generates seatbelt profile with allowed_write_paths
-3. Starts Martian proxy on ephemeral localhost port
-4. Executes command under sandbox-exec with:
-   - Filesystem: writes blocked except allowed paths
-   - Filesystem: reads blocked for ~/.<dotfiles>
+2. Collects dynamic env paths (TMPDIR, XDG_CACHE_HOME, XDG_CONFIG_HOME)
+3. Generates strict seatbelt profile with:
+   - Read-deny-by-default baseline
+   - System path reads allowed (/usr, /bin, /System, etc.)
+   - allowed_read_paths (read-only) and allowed_write_paths (read+write)
+   - Env-derived paths allowed as read+write
+   - CWD allowed as read+write
+4. Starts Martian proxy on ephemeral localhost port
+5. Executes command under sandbox-exec with:
+   - Filesystem: reads denied except system paths and configured allows
+   - Filesystem: writes denied except configured allowed_write_paths
+   - Filesystem: ~/.<dotfiles> and /var/run always denied (last-match-wins)
    - Network: all traffic forced through localhost proxy
-5. Proxy evaluates each request against allowlist policy
+6. Proxy evaluates each request against allowlist policy
    - Allowed: request proceeds
    - Denied: connection rejected
-6. Command exits, proxy shuts down
+7. Command exits, proxy shuts down
 ```
 
 ## Components
@@ -72,10 +79,11 @@ YAML configuration loaded from `~/.veilwarden/config.yaml`.
 # ~/.veilwarden/config.yaml
 
 sandbox:
-  allowed_write_paths:
-    - ./                    # Relative to config file
+  allowed_read_paths:     # Read-only exceptions (optional)
+    - ~/.claude
+  allowed_write_paths:    # Read+write exceptions
+    - ./
     - /tmp
-    - ~/.cache
 
 policy:
   allowlist:
@@ -83,6 +91,8 @@ policy:
     - "github.com"
     - "api.anthropic.com"
 ```
+
+`TMPDIR`, `XDG_CACHE_HOME`, and `XDG_CONFIG_HOME` are automatically allowed (read+write) when explicitly set in the environment.
 
 **Config struct:**
 
@@ -93,6 +103,7 @@ type Config struct {
 }
 
 type SandboxConfig struct {
+    AllowedReadPaths  []string `yaml:"allowed_read_paths"`
     AllowedWritePaths []string `yaml:"allowed_write_paths"`
 }
 
@@ -107,12 +118,20 @@ type PolicyConfig struct {
 
 macOS seatbelt integration with a fixed "standard" security profile.
 
-**Security model:**
+**Security model (strict, deny-by-default):**
+- **Reads denied** everywhere except:
+  - System paths (`/usr`, `/bin`, `/sbin`, `/opt`, `/etc`, `/System`, `/Applications`, `/Library`, `/dev`, `/tmp`, `/nix`, `/private/var/db`, `/private/var/folders`)
+  - `allowed_read_paths` from config (read-only)
+  - `allowed_write_paths` from config (read+write)
+  - Canonical CWD (read+write)
+  - `TMPDIR`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` when explicitly set (read+write)
 - **Writes denied** everywhere except:
   - `allowed_write_paths` from config
   - `/private/var/folders` (macOS temp)
   - `/dev/null`, `/dev/tty`, etc.
-- **Reads denied** for `~/.*` dotfiles (with exceptions for allowed write paths)
+- **Always denied** (last-match-wins):
+  - `~/.*` dotfiles (reads and writes, with configured exceptions)
+  - `/var/run` and `/private/var/run` (socket escape paths)
 - **Dangerous files blocked** even in allowed paths:
   - `.env`, `.env.*`
   - `.git/hooks/*`, `.git/config`

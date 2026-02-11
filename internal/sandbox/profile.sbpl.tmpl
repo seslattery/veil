@@ -15,34 +15,50 @@
   (literal "/bin/ps")
   (with no-sandbox))
 
-;; === Filesystem Reads ===
+;; ============================================================
+;; === Filesystem Reads (strict: deny-by-default) ===
+;; ============================================================
 
-;; Deny reads of home dotfiles (with exceptions for allowed paths)
-{{if or .DotfileExceptionDirs .DotfileExceptionFiles}}
-(deny file-read*
-  (require-all
-    (regex #"^{{.HomeDir}}/\..*")
-{{range .DotfileExceptionDirs}}
-    (require-not (subpath "{{.}}"))
+(deny file-read*)
+
+;; System paths
+(allow file-read* (subpath "/usr"))
+(allow file-read* (subpath "/bin"))
+(allow file-read* (subpath "/sbin"))
+(allow file-read* (subpath "/opt"))
+(allow file-read* (subpath "/etc"))
+(allow file-read* (subpath "/private/etc"))
+(allow file-read* (subpath "/System"))
+(allow file-read* (subpath "/Applications"))
+(allow file-read* (subpath "/Library"))
+(allow file-read* (subpath "/dev"))
+(allow file-read* (subpath "/tmp"))
+(allow file-read* (subpath "/private/tmp"))
+(allow file-read* (subpath "/nix"))
+(allow file-read* (subpath "/private/var/db"))
+(allow file-read* (subpath "/private/var/folders"))
+
+;; Configured read-only paths
+{{range .AllowedReadDirs}}
+(allow file-read* (subpath "{{.}}"))
 {{end}}
-{{range .DotfileExceptionFiles}}
-    (require-not (literal "{{.}}"))
-{{end}}))
-{{else}}
-(deny file-read* (regex #"^{{.HomeDir}}/\..*"))
+{{range .AllowedReadFiles}}
+(allow file-read* (literal "{{.}}"))
 {{end}}
 
-;; Allow reads everywhere else
-(allow file-read*)
+;; Configured write paths also get read access
+{{range .AllowedWriteDirs}}
+(allow file-read* (subpath "{{.}}"))
+{{end}}
+{{range .AllowedWriteFiles}}
+(allow file-read* (literal "{{.}}"))
+{{end}}
 
+;; ============================================================
 ;; === Filesystem Writes ===
+;; ============================================================
 
 (deny file-write*)
-
-;; Dangerous file protection - blocked even in allowed paths
-{{range .DangerousPatterns}}
-(deny file-write* (regex #"{{.}}"))
-{{end}}
 
 ;; Allowed write paths
 {{range .AllowedWriteDirs}}
@@ -70,7 +86,9 @@
 (allow file-write* (subpath "/private/var/folders"))
 (allow file-write-unlink (subpath "/private/var/folders"))
 
+;; ============================================================
 ;; === Network ===
+;; ============================================================
 
 (deny network*)
 (allow network-bind (local ip "localhost:*"))
@@ -169,13 +187,6 @@
 
 (allow system-socket (require-all (socket-domain AF_SYSTEM) (socket-protocol 2)))
 (allow distributed-notification-post)
-
-;; Device reads
-(allow file-read* (literal "/dev/null"))
-(allow file-read* (literal "/dev/zero"))
-(allow file-read* (literal "/dev/random"))
-(allow file-read* (literal "/dev/urandom"))
-(allow file-read* (literal "/dev/tty"))
 
 {{if .EnablePTY}}
 ;; PTY support (interactive shells)

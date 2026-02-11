@@ -13,8 +13,11 @@ var initCmd = &cobra.Command{
 	Short: "Create a default config file",
 	Long: `Creates a default configuration file at ~/.veilwarden/config.yaml.
 
-The default config allows writes to the current directory and /tmp,
-and permits network access to common package registries.`,
+The default config uses a strict read-deny-by-default sandbox profile.
+Reads are allowed for system paths and configured allowed_read_paths.
+Writes are allowed for configured allowed_write_paths.
+TMPDIR, XDG_CACHE_HOME, and XDG_CONFIG_HOME are automatically allowed
+when explicitly set in the environment.`,
 	RunE: runInit,
 }
 
@@ -26,11 +29,19 @@ const defaultConfig = `# Veil configuration
 # See: https://github.com/seslattery/veil
 
 sandbox:
+  # Read-only path exceptions (strict read-deny-by-default)
+  # allowed_read_paths:
+  #   - ~/.claude
+
+  # Read+write path exceptions
   allowed_write_paths:
     - ./            # Current directory
     - /tmp          # Temporary files
     - ~/.claude     # Claude Code config directory
     - ~/.claude.json  # Claude Code config file
+
+  # TMPDIR, XDG_CACHE_HOME, and XDG_CONFIG_HOME are automatically
+  # allowed (read+write) when explicitly set in the environment.
 
 policy:
   allowlist:

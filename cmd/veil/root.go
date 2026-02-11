@@ -111,7 +111,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Create sandbox
-	sb := sandbox.New(prx.Port(), cfg.Sandbox.AllowedWritePaths)
+	sb := sandbox.New(prx.Port(), cfg.Sandbox.AllowedReadPaths, cfg.Sandbox.AllowedWritePaths)
 
 	// Dry run: just print profile
 	if dryRun {

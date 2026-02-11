@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/template"
 )
@@ -13,93 +14,143 @@ import (
 //go:embed profile.sbpl.tmpl
 var profileTemplate string
 
-// profileData holds the data for rendering the seatbelt profile.
 type profileData struct {
-	HomeDir              string
-	ProxyPort            int
-	AllowedWriteDirs     []string // Directories (use subpath)
-	AllowedWriteFiles    []string // Individual files (use literal)
-	DotfileExceptionDirs []string // Dotfile directories to allow reading
-	DotfileExceptionFiles []string // Dotfile files to allow reading
-	DangerousPatterns    []string
-	EnablePTY            bool
+	HomeDir           string
+	ProxyPort         int
+	AllowedReadDirs   []string
+	AllowedReadFiles  []string
+	AllowedWriteDirs  []string
+	AllowedWriteFiles []string
+	EnablePTY         bool
 }
 
-// dangerousPatterns returns seatbelt regex patterns for files that should
-// never be writable, even in allowed paths.
-func dangerousPatterns() []string {
-	return []string{
-		`.*/\.env$`,
-		`.*/\.env\..*`,
-		`^\.env$`,
-		`.*/\.npmrc$`,
-		`^\.npmrc$`,
-		`.*/\.pypirc$`,
-		`^\.pypirc$`,
-		`.*/\.gem/credentials$`,
-		`.*/\.git/hooks$`,
-		`.*/\.git/hooks/.*`,
-		`.*/\.git/config$`,
-		`.*/\.docker/config\.json$`,
-		`.*/\.aws/credentials$`,
-		`.*/\.azure/credentials$`,
-		`.*/\.config/gcloud/credentials\.db$`,
+func collectPATHDirs() []string {
+	pathVal := os.Getenv("PATH")
+	if pathVal == "" {
+		return nil
 	}
+	seen := make(map[string]bool)
+	var dirs []string
+	for _, dir := range strings.Split(pathVal, ":") {
+		if dir == "" || !filepath.IsAbs(dir) || containsControlChars(dir) {
+			continue
+		}
+		cleaned := filepath.Clean(dir)
+		resolved, err := filepath.EvalSymlinks(cleaned)
+		if err != nil {
+			resolved = cleaned
+		}
+		if !seen[resolved] {
+			seen[resolved] = true
+			dirs = append(dirs, resolved)
+		}
+	}
+	return dirs
 }
 
-// GenerateProfile renders the seatbelt profile with the given configuration.
-func GenerateProfile(proxyPort int, allowedWritePaths []string, enablePTY bool) (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+func collectEnvPaths() []string {
+	seen := make(map[string]bool)
+	var paths []string
+
+	for _, key := range []string{"TMPDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"} {
+		val := os.Getenv(key)
+		if val == "" {
+			continue
+		}
+		if !filepath.IsAbs(val) {
+			continue
+		}
+		if containsControlChars(val) {
+			continue
+		}
+		cleaned := filepath.Clean(val)
+		resolved, err := filepath.EvalSymlinks(cleaned)
+		if err != nil {
+			resolved = cleaned
+		}
+		if !seen[resolved] {
+			seen[resolved] = true
+			paths = append(paths, resolved)
+		}
 	}
 
-	// Expand paths, make absolute, resolve symlinks, and separate files from dirs
-	var dirs, files []string
-	var dotfileDirs, dotfileFiles []string
-	for _, p := range allowedWritePaths {
+	return paths
+}
+
+func containsControlChars(s string) bool {
+	for _, r := range s {
+		if r < 0x20 && r != 0x09 {
+			return true
+		}
+	}
+	return false
+}
+
+func processPaths(paths []string, homeDir string) (dirs, files []string) {
+	for _, p := range paths {
 		expanded := expandPath(p, homeDir)
 		abs, err := filepath.Abs(expanded)
 		if err != nil {
-			return "", err
+			continue
 		}
-		// Resolve symlinks (e.g., /tmp -> /private/tmp on macOS)
 		resolved, err := filepath.EvalSymlinks(abs)
 		if err != nil {
-			// Path may not exist yet; use the absolute path as-is
 			resolved = abs
 		}
 
-		// Check if path is a file or directory
 		info, err := os.Stat(resolved)
 		isFile := err == nil && !info.IsDir()
 
 		if isFile {
 			files = append(files, resolved)
 		} else {
-			// Treat as directory (existing dir or path that doesn't exist yet)
 			dirs = append(dirs, resolved)
 		}
+	}
+	return
+}
 
-		// Track dotfile exceptions separately for the deny rule
-		if isHomeDotfile(resolved, homeDir) {
-			if isFile {
-				dotfileFiles = append(dotfileFiles, resolved)
-			} else {
-				dotfileDirs = append(dotfileDirs, resolved)
-			}
-		}
+func dedup(s []string) []string {
+	if len(s) == 0 {
+		return s
+	}
+	slices.Sort(s)
+	return slices.Compact(s)
+}
+
+func GenerateProfile(proxyPort int, allowedReadPaths, allowedWritePaths []string, enablePTY bool) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
 	}
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	canonicalCWD, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		canonicalCWD = cwd
+	}
+
+	envPaths := collectEnvPaths()
+	pathDirs := collectPATHDirs()
+
+	readDirs, readFiles := processPaths(allowedReadPaths, homeDir)
+	writeDirs, writeFiles := processPaths(allowedWritePaths, homeDir)
+
+	readDirs = append(readDirs, pathDirs...)
+	writeDirs = append(writeDirs, canonicalCWD)
+	writeDirs = append(writeDirs, envPaths...)
+
 	data := profileData{
-		HomeDir:               homeDir,
-		ProxyPort:             proxyPort,
-		AllowedWriteDirs:      dirs,
-		AllowedWriteFiles:     files,
-		DotfileExceptionDirs:  dotfileDirs,
-		DotfileExceptionFiles: dotfileFiles,
-		DangerousPatterns:     dangerousPatterns(),
-		EnablePTY:             enablePTY,
+		HomeDir:           homeDir,
+		ProxyPort:         proxyPort,
+		AllowedReadDirs:   dedup(readDirs),
+		AllowedReadFiles:  dedup(readFiles),
+		AllowedWriteDirs:  dedup(writeDirs),
+		AllowedWriteFiles: dedup(writeFiles),
+		EnablePTY:         enablePTY,
 	}
 
 	tmpl, err := template.New("profile").Parse(profileTemplate)
@@ -115,7 +166,6 @@ func GenerateProfile(proxyPort int, allowedWritePaths []string, enablePTY bool) 
 	return buf.String(), nil
 }
 
-// expandPath expands ~ to home directory.
 func expandPath(path, homeDir string) string {
 	if len(path) >= 2 && path[:2] == "~/" {
 		return filepath.Join(homeDir, path[2:])
@@ -124,15 +174,4 @@ func expandPath(path, homeDir string) string {
 		return homeDir
 	}
 	return path
-}
-
-// isHomeDotfile checks if a path is a dotfile/dotdir in the home directory.
-func isHomeDotfile(path, homeDir string) bool {
-	if !strings.HasPrefix(path, homeDir+"/") {
-		return false
-	}
-	// Get the relative path after home directory
-	rel := strings.TrimPrefix(path, homeDir+"/")
-	// Check if it starts with a dot
-	return strings.HasPrefix(rel, ".")
 }

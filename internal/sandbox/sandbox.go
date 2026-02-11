@@ -16,13 +16,15 @@ import (
 // Sandbox executes commands in a macOS seatbelt sandbox.
 type Sandbox struct {
 	ProxyPort         int
+	AllowedReadPaths  []string
 	AllowedWritePaths []string
 }
 
 // New creates a new Sandbox.
-func New(proxyPort int, allowedWritePaths []string) *Sandbox {
+func New(proxyPort int, allowedReadPaths, allowedWritePaths []string) *Sandbox {
 	return &Sandbox{
 		ProxyPort:         proxyPort,
+		AllowedReadPaths:  allowedReadPaths,
 		AllowedWritePaths: allowedWritePaths,
 	}
 }
@@ -32,12 +34,16 @@ func New(proxyPort int, allowedWritePaths []string) *Sandbox {
 func (s *Sandbox) Run(ctx context.Context, name string, args []string, env []string) error {
 	isTTY := term.IsTerminal(int(os.Stdin.Fd()))
 
-	profile, err := GenerateProfile(s.ProxyPort, s.AllowedWritePaths, isTTY)
+	binPath, err := exec.LookPath(name)
+	if err != nil {
+		return fmt.Errorf("command not found: %s", name)
+	}
+
+	profile, err := GenerateProfile(s.ProxyPort, s.AllowedReadPaths, s.AllowedWritePaths, isTTY)
 	if err != nil {
 		return fmt.Errorf("generating profile: %w", err)
 	}
 
-	// Write profile to temp file (more reliable than -p inline)
 	profileFile, err := os.CreateTemp("", "veil-seatbelt-*.sb")
 	if err != nil {
 		return fmt.Errorf("creating profile file: %w", err)
@@ -50,11 +56,6 @@ func (s *Sandbox) Run(ctx context.Context, name string, args []string, env []str
 	}
 	if err := profileFile.Close(); err != nil {
 		return fmt.Errorf("closing profile file: %w", err)
-	}
-
-	binPath, err := exec.LookPath(name)
-	if err != nil {
-		return fmt.Errorf("command not found: %s", name)
 	}
 
 	sandboxArgs := []string{"-f", profilePath, binPath}
@@ -72,7 +73,7 @@ func (s *Sandbox) Run(ctx context.Context, name string, args []string, env []str
 // Profile returns the generated seatbelt profile for dry-run display.
 func (s *Sandbox) Profile() (string, error) {
 	isTTY := term.IsTerminal(int(os.Stdin.Fd()))
-	return GenerateProfile(s.ProxyPort, s.AllowedWritePaths, isTTY)
+	return GenerateProfile(s.ProxyPort, s.AllowedReadPaths, s.AllowedWritePaths, isTTY)
 }
 
 func (s *Sandbox) runWithPTY(cmd *exec.Cmd) error {

@@ -18,6 +18,7 @@ type Config struct {
 // SandboxConfig defines filesystem isolation settings.
 type SandboxConfig struct {
 	AllowedWritePaths []string `yaml:"allowed_write_paths"`
+	AllowedReadPaths  []string `yaml:"allowed_read_paths"`
 }
 
 // PolicyConfig defines network policy settings.
@@ -65,6 +66,26 @@ func Load(path string) (*Config, error) {
 func (c *Config) Validate() error {
 	if len(c.Policy.Allowlist) == 0 {
 		return fmt.Errorf("policy.allowlist cannot be empty")
+	}
+	if err := validatePaths("sandbox.allowed_write_paths", c.Sandbox.AllowedWritePaths); err != nil {
+		return err
+	}
+	if err := validatePaths("sandbox.allowed_read_paths", c.Sandbox.AllowedReadPaths); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePaths(field string, paths []string) error {
+	for _, p := range paths {
+		if p == "" {
+			return fmt.Errorf("%s: empty path entry", field)
+		}
+		for _, r := range p {
+			if r < 0x20 && r != '\t' {
+				return fmt.Errorf("%s: path contains control characters: %s", field, p)
+			}
+		}
 	}
 	return nil
 }
